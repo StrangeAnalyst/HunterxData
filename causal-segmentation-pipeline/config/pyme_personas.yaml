@@ -1,0 +1,263 @@
+# ============================================================================
+# CONFIGURACION DEL PIPELINE CAUSAL — CASO DE USO: PYME PERSONAS
+# ============================================================================
+# Este archivo es TODO lo que hay que cambiar para correr el pipeline en un
+# nuevo caso de uso. El codigo no se toca. Ver config/_template.yaml para
+# la descripcion de cada parametro.
+# ============================================================================
+
+caso_uso: "Pyme Personas"
+
+# ----------------------------------------------------------------------------
+# DATOS
+# ----------------------------------------------------------------------------
+data:
+  tabla_features: enriched.hpu_output.gold_pred_cluster_hpu_monthly_v1
+  col_id: row_id                  # identificador unico del cliente
+  col_segmento: user_label        # columna con el segmento del cliente
+  col_periodo: ref_date           # columna con el snapshot mensual
+  periodo_actual: "260101"        # snapshot sobre el que se generan estrategias
+  # Historia usada por el backtesting (incluye el periodo actual).
+  # Minimo 3 periodos para poder clasificar palancas como CONFIRMADA/REFUTADA.
+  periodos_historicos: ["250801", "250901", "251001", "251101", "251201", "260101"]
+  filtros:                        # filtros adicionales (columna: valor)
+    segmento: "Pyme Personas"
+
+# ----------------------------------------------------------------------------
+# SEGMENTOS (ordenados de menor a mayor valor)
+# ----------------------------------------------------------------------------
+segmentos:
+  orden:
+    - Low Value Users
+    - Emerging Users
+    - Growing Users
+    - High Power Users
+    - High Value Users
+  nombres_cortos:
+    Low Value Users: LowValue
+    Emerging Users: Emerging
+    Growing Users: Growing
+    High Power Users: HPU
+    High Value Users: HVU
+  # LTV anual estimado por segmento (DOP). Se usa para calcular el valor
+  # de mover un cliente al siguiente segmento (delta LTV).
+  ltv_anual:
+    Low Value Users: 50000
+    Emerging Users: 150000
+    Growing Users: 400000
+    High Power Users: 1000000
+    High Value Users: 3000000
+
+# ----------------------------------------------------------------------------
+# VARIABLES
+# ----------------------------------------------------------------------------
+variables:
+  max_pct_nulos: 0.5              # descartar variables con mas de 50% nulos
+
+  # Variables que el banco NO puede mover (demograficas, scores, outputs de
+  # otros modelos, identificadores). Nunca se proponen como palanca.
+  no_accionables:
+    - row_id
+    - ref_date
+    - segmento
+    - user_label
+    - subsegmento
+    - tipo_deudor
+    - customer_active_desc
+    - actividad_economica
+    - clase_actividad
+    - tipo_persona
+    - max_acc_open_dt
+    - edad_client
+    - tenure_client
+    - home_owner
+    - is_black_list
+    - riesgo_cte
+    - prob_default
+    - probabilidad
+    - rango_deser
+    - legal
+    - castigado
+    - fraude
+    - ingreso_est
+    - last_ingreso_estimado
+    - annl_revenue
+    - digital_grade
+    - digital_use
+    - ltv_1yr
+    - ltv_strategic
+    - recency_open_dt
+    - recency_close_dt
+    - cluster
+    - vol_neg_12m
+
+  # Variables de contexto que se usan como controles en los modelos causales
+  # (caracteristicas del cliente que confunden la relacion palanca -> evolucion)
+  controles:
+    - edad_client
+    - tenure_client
+    - home_owner
+    - is_preferente
+    - is_premier
+    - ingreso_est
+    - annl_revenue
+    - is_black_list
+
+  # Categoricas accionables -> se codifican y entran al analisis
+  # metodos: one_hot | target_encode
+  categoricas_accionables:
+    canal_mas_usado: one_hot
+    canal_mas_usado_trx_mig: one_hot
+    canal_dig_mas_usado: one_hot
+    mcc_tc_favorito_12m: target_encode
+    mcc_db_favorito_12m: target_encode
+
+  # Categoricas que solo sirven como control (orden de riesgo, etc.)
+  categoricas_controles:
+    riesgo_prest: ordinal
+    riesgo_tc: ordinal
+
+  # Mapa de dimensiones de negocio. La seleccion de palancas garantiza un
+  # minimo por dimension para no dejar puntos ciegos (ej: solo transacciones).
+  dimensiones:
+    PRODUCTOS: [n_accounts, n_acc_captacion, n_acc_colocacion, n_dif_products,
+                n_acc_as_principal, n_acc_as_secundario, pct_as_principal,
+                n_cta_ahorros, n_cta_corrientes, n_certificados, n_cto_diferidos,
+                n_prestamos, n_tarjetas_credito, n_open_tc_, n_tc, n_prest,
+                pct_open_products, pct_colocacion_products]
+    TRANSACCIONES: [n_trx_cc_12m, avg_trx_cc_12m, sum_amt_cc_12m, avg_amt_cc_12m,
+                    n_transfers, avg_transfers, sum_amt_transfers, avg_amt_transfers,
+                    n_consumo, avg_consumo, sum_amt_consumo, avg_amt_consumo,
+                    n_retiro, avg_retiro, sum_amt_retiro, avg_amt_retiro,
+                    n_trx_ln_norm, avg_trx_ln_norm, sum_amt_ln_norm, avg_amt_ln_norm,
+                    cant_trx]
+    GASTO_TC: [pct_compras_tc, pct_educacion_tc, pct_entretenimiento_tc,
+               pct_gasolina_tc, pct_hogar_tc, pct_otros_tc, pct_restaurant_tc,
+               pct_salud_tc, pct_servicios_tc, pct_retiro_tc, pct_viajes_tc,
+               pct_local_tc, pct_internacional_tc]
+    GASTO_DEBITO: [pct_compras_debito, pct_educacion_debito, pct_entretenimiento_debito,
+                   pct_gasolina_debito, pct_hogar_debito, pct_otros_debito,
+                   pct_restaurant_debito, pct_salud_debito, pct_servicios_debito,
+                   pct_retiro_debito, pct_viajes_debito, pct_local_debito,
+                   pct_internacional_debito]
+    BALANCES_LIMITES: [lim_tc_dop, bal_prest, bce_cah, bce_cco, bce_cert,
+                       bce_pres, bce_tarj, bce_promedio, max_bce_,
+                       lm_ratio_, sum_of_limite, ratio_pct_]
+    CANALES_DIGITALES: [q_digital, q_ofic, q_mig_ofic, q_alternos,
+                        digital, digital_mgr, alternos, alternos_mgr,
+                        sucursal, sucursal_mgr, afiliado_, pref_channel_,
+                        pct_canal_mas_usado, pct_canal_dig_mas_usado,
+                        ohe_canal_, cte_debito, cte_nomina, afiliado_tpago]
+    MORA_COBRANZA: [n_mora_, tiene_mora_, mora_ult_, acuerdo_pago]
+    MIX_CREDITO: [pct_prest_com, pct_prest_pers, pct_prest_hip,
+                  pct_n_tc_bpd, pct_n_prest_bpd, pct_bal_dop_bpd]
+    SOLICITUDES: [n_sol_12m, n_sol_aprobada, n_sol_decline, n_sol_total_loans, n_sol_tc]
+    WALLET_SHARE: [_bpd_share, _bpd, total_bpd, hipotecarios_bpd,
+                   consumo_bpd, vehiculo_bpd, comercial_bpd]
+    RECLAMOS: [n_reclamos_, avg_dias_cierre_reclamos, pct_reclamos_, has_reclamos_]
+    RENTABILIDAD: [rentabilidad_, pct_periods_negative_rentabilidad, mensual_revenue]
+    MCC_ENCODED: [te_mcc_, is_mcc_tc_, is_mcc_db_]
+
+# ----------------------------------------------------------------------------
+# MODELADO PREDICTIVO (descubrimiento de candidatas)
+# ----------------------------------------------------------------------------
+modelado:
+  test_size: 0.3
+  random_state: 17
+  max_sample_per_par: 50000       # muestreo por par de transicion
+  shap_max_samples: 500
+  top_k_palancas: 50              # candidatas que pasan al filtro causal
+  min_por_dimension: 2            # minimo de variables por dimension de negocio
+  lgbm:
+    objective: binary
+    n_estimators: 300
+    learning_rate: 0.05
+    max_depth: 8
+    num_leaves: 31
+    min_child_samples: 20
+    colsample_bytree: 0.7
+    subsample: 0.8
+    reg_alpha: 0.5
+    reg_lambda: 0.5
+    verbose: -1
+    n_jobs: -1
+
+# ----------------------------------------------------------------------------
+# INFERENCIA CAUSAL (Double ML)
+# ----------------------------------------------------------------------------
+causal:
+  significancia: 0.10             # p-value maximo para considerar efecto real
+  placebo_max_pct: 50             # el ATE placebo debe ser < X% del ATE real
+  max_controles: 15               # controles maximos en DML (velocidad)
+
+# ----------------------------------------------------------------------------
+# BACKTESTING (validacion integrada — antes era la auditoria independiente)
+# ----------------------------------------------------------------------------
+backtesting:
+  activo: true
+  min_periodos: 3                 # historia minima para clasificar palancas
+  max_sample_per_par: 10000       # muestreo por periodo (velocidad)
+  estabilidad_confirmada: 0.60    # >=60% de periodos significativos => CONFIRMADA
+  estabilidad_inestable: 0.30     # 30-60% => INESTABLE | <30% => REFUTADA
+  placebo_permutaciones: 5
+  sensibilidad_pasos: [-2.0, -1.0, -0.5, 0.5, 1.0, 2.0]   # multiplos de IQR
+  validar_cuadrantes_t1: true     # contrastar cuadrantes vs transiciones reales
+
+# ----------------------------------------------------------------------------
+# CUADRANTES (matriz de inversion)
+#   Eje X = P(evolucion)  |  Eje Y = tau (impacto causal de intervenir)
+# ----------------------------------------------------------------------------
+cuadrantes:
+  umbral_p_percentil: 50          # corte del eje X (mediana de P)
+  umbral_tau_percentil: 60        # corte del eje Y (percentil 60 de tau)
+
+# ----------------------------------------------------------------------------
+# ESTRATEGIA
+# ----------------------------------------------------------------------------
+estrategia:
+  # Costo estimado (DOP) de mover una unidad de cada palanca.
+  # Se usa para el score de prioridad: tau x deltaLTV / costo.
+  costo_por_unidad:
+    n_accounts: 25000
+    n_dif_products: 25000
+    n_tarjetas_credito: 15000
+    n_prestamos: 50000
+    n_certificados: 10000
+    n_cta_ahorros: 5000
+    n_cta_corrientes: 10000
+    bce_promedio_12m: 0.001
+    bce_cah_12m: 0.001
+    default: 10000
+  # Brecha vs segmento objetivo: percentiles de referencia del segmento superior
+  gap_percentil_objetivo: 50      # mediana del segmento objetivo como meta
+
+# ----------------------------------------------------------------------------
+# DISEÑO EXPERIMENTAL A/B (para confirmar las palancas en campo)
+# ----------------------------------------------------------------------------
+ab_test:
+  activo: true
+  tasa_base: 0.06
+  mde: 0.04                       # efecto minimo detectable (pp)
+  alpha: 0.05
+  poder: 0.80
+  n_treatment: 500
+  n_control: 500
+  n_holdout: 250
+
+# ----------------------------------------------------------------------------
+# INVOLUCION (analisis espejo: que hace que un cliente CAIGA de segmento)
+# ----------------------------------------------------------------------------
+involucion:
+  activo: true
+
+# ----------------------------------------------------------------------------
+# SALIDAS
+# ----------------------------------------------------------------------------
+salidas:
+  guardar_delta: true
+  prefijo_tablas: enriched.hpu_output
+  sufijo: pyme_personas           # las tablas terminan en _<sufijo>
+
+mlflow:
+  activo: true
+  experimento: /Users/fmendez@bpd.com.do/Causal_Pyme_Personas_Pipeline

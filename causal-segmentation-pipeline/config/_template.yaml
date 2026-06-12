@@ -1,0 +1,100 @@
+# ============================================================================
+# PLANTILLA DE CONFIGURACION — copiar como config/<mi_caso_de_uso>.yaml
+# ============================================================================
+# Pasos para un nuevo caso de uso:
+#   1. Copiar este archivo:  cp _template.yaml mi_caso.yaml
+#   2. Completar las secciones marcadas con <...>
+#   3. En el notebook driver, apuntar el widget config_path a este archivo
+#   4. Ejecutar. No hay que tocar codigo.
+# ============================================================================
+
+caso_uso: "<Nombre del caso de uso>"
+
+data:
+  tabla_features: <catalogo.esquema.tabla>   # tabla con 1 fila por cliente-periodo
+  col_id: row_id                             # identificador unico del cliente
+  col_segmento: user_label                   # columna con el segmento actual
+  col_periodo: ref_date                      # columna del snapshot (ej. YYMMDD)
+  periodo_actual: "<YYMMDD>"                 # periodo sobre el que se actua
+  periodos_historicos: ["<p1>", "<p2>", "<p3>"]  # min 3 para backtesting
+  filtros: {}                                # ej. {segmento: "Banca Premium"}
+
+segmentos:
+  orden: []            # de MENOR a MAYOR valor, ej: [Starting, Momentum, Growth, Elite]
+  nombres_cortos: {}   # etiquetas cortas para tablas y graficos
+  ltv_anual: {}        # valor anual estimado por segmento (misma moneda que costos)
+
+variables:
+  max_pct_nulos: 0.5
+  no_accionables: []           # ids, demograficas, scores, outputs de modelos
+  controles: []                # confounders de contexto para los modelos causales
+  categoricas_accionables: {}  # {columna: one_hot | target_encode}
+  categoricas_controles: {}    # {columna: ordinal}
+  dimensiones: {}              # {DIMENSION: [patrones de nombre de columna]}
+
+modelado:
+  test_size: 0.3
+  random_state: 17
+  max_sample_per_par: 50000
+  shap_max_samples: 500
+  top_k_palancas: 50
+  min_por_dimension: 2
+  lgbm:
+    objective: binary
+    n_estimators: 300
+    learning_rate: 0.05
+    max_depth: 8
+    num_leaves: 31
+    min_child_samples: 20
+    colsample_bytree: 0.7
+    subsample: 0.8
+    reg_alpha: 0.5
+    reg_lambda: 0.5
+    verbose: -1
+    n_jobs: -1
+
+causal:
+  significancia: 0.10
+  placebo_max_pct: 50
+  max_controles: 15
+
+backtesting:
+  activo: true
+  min_periodos: 3
+  max_sample_per_par: 10000
+  estabilidad_confirmada: 0.60
+  estabilidad_inestable: 0.30
+  placebo_permutaciones: 5
+  sensibilidad_pasos: [-2.0, -1.0, -0.5, 0.5, 1.0, 2.0]
+  validar_cuadrantes_t1: true
+
+cuadrantes:
+  umbral_p_percentil: 50
+  umbral_tau_percentil: 60
+
+estrategia:
+  costo_por_unidad:
+    default: 10000
+  gap_percentil_objetivo: 50
+
+ab_test:
+  activo: true
+  tasa_base: 0.06
+  mde: 0.04
+  alpha: 0.05
+  poder: 0.80
+  n_treatment: 500
+  n_control: 500
+  n_holdout: 250
+
+involucion:
+  activo: true
+
+salidas:
+  guardar_delta: true
+  prefijo_tablas: <catalogo.esquema>
+  sufijo: <mi_caso>
+
+mlflow:
+  activo: true
+  experimento: /Users/<usuario>/Causal_<MiCaso>_Pipeline
