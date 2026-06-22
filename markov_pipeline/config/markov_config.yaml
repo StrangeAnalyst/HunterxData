@@ -1,0 +1,394 @@
+# =============================================================================
+# markov_config.yaml
+# -----------------------------------------------------------------------------
+# SINGLE SOURCE OF TRUTH for the non-homogeneous Markov cluster-transition
+# pipeline. Everything that is policy, threshold, business number, table name
+# or modelling switch lives here so that Risk / Finance / Model Governance can
+# audit and override without touching code.
+#
+# CONVENTIONS
+#   * No business number is ever hardcoded in Python. If code needs a number it
+#     reads it from this file.
+#   * Unity Catalog tables are always 3-level: <catalog>.<schema>.<table>.
+#   * Anything that is an *assumption* (not yet sourced from the bank's own
+#     figures or not yet causally estimated) carries an explicit `*_assumed`
+#     / `assumption_flag` so it surfaces in the audit trail.
+# =============================================================================
+
+meta:
+  pipeline_name: markov_cluster_transitions
+  version: "1.0.0"
+  owner: "customer-analytics"            # model owner team (see RUNBOOK RACI)
+  description: >
+    Non-homogeneous Markov chain over customer value clusters. Per-customer,
+    feature-dependent 6x6 transition kernel composed into a Markov Reward
+    Process for expected lifetime, churn absorption and CLV.
+
+# -----------------------------------------------------------------------------
+# STATE CONTRACT  (ordinal hierarchy — NEVER reorder)
+# -----------------------------------------------------------------------------
+# Transient states: ranks 0..4. Absorbing state: rank 5 (churned).
+state_contract:
+  cluster_rank:
+    low_value: 0
+    emerging_user: 1
+    growing_user: 2
+    high_power: 3
+    high_value: 4
+  absorbing_state:
+    name: churned
+    rank: 5
+  transient_ranks: [0, 1, 2, 3, 4]
+  absorbing_ranks: [5]
+  n_states: 6
+  # Convenience anchors used by the value layer / reconstruction logic.
+  growth_target_state: high_power        # cultivation target (prob_reach_high_power)
+  delta_clip_min: 0                      # destination = clip(origin + delta, 0, 4)
+  delta_clip_max: 4
+
+# -----------------------------------------------------------------------------
+# HORIZONS
+# -----------------------------------------------------------------------------
+# Each horizon defines the look-ahead window (months) and the persistence rule
+# used to label the destination state (see targets/build_transition_target.py).
+horizons:
+  - name: "1m"
+    months_ahead: 1
+    persistence:
+      window_months: 1
+      required_months: 1                 # 1-of-1
+  - name: "3m"
+    months_ahead: 3
+    persistence:
+      window_months: 3
+      required_months: 2                 # 2-of-3
+  - name: "6m"
+    months_ahead: 6
+    persistence:
+      window_months: 6
+      required_months: 4                 # 4-of-6
+  - name: "9m"
+    months_ahead: 9
+    persistence:
+      window_months: 9
+      required_months: 6                 # 6-of-9
+
+# -----------------------------------------------------------------------------
+# CHURN DEFINITION (drives the absorbing state)
+# -----------------------------------------------------------------------------
+# A customer is mapped to the absorbing `churned` state at horizon end when the
+# churn condition holds for `min_consecutive_months`. Encoded as a boolean
+# expression evaluated against the snapshot feature frame.
+churn:
+  definition_column: is_churned          # precomputed boolean in feature store, OR
+  rule:                                  # fallback rule if the column is absent
+    inactivity_months: 3                 # no monetary activity for N months
+    balance_threshold: 0.0               # AND end-of-period balance <= threshold
+  min_consecutive_months: 1
+  absorbing: true                        # churned never transitions out
+
+# -----------------------------------------------------------------------------
+# TRAINING WINDOW + POINT-IN-TIME SNAPSHOT LOGIC
+# -----------------------------------------------------------------------------
+training:
+  # Rolling training window of month-end snapshots used to fit row models.
+  window_months: 24
+  min_train_snapshots: 12
+  # Point-in-time correctness: features observed strictly at snapshot_date,
+  # label observed at snapshot_date + horizon.months_ahead. The embargo guards
+  # against label leakage from in-flight months.
+  point_in_time:
+    snapshot_grain: month_end            # all features as-of last calendar day
+    feature_asof_offset_days: 0          # features sampled at snapshot_date
+    label_embargo_days: 0                # no overlap allowed between feat & label
+    enforce_no_future_columns: true      # guardrail L2 check
+  test_split:
+    method: temporal                     # last K snapshots held out (no shuffle)
+    holdout_snapshots: 3
+
+# -----------------------------------------------------------------------------
+# FEATURES (point-in-time snapshot at month-end)
+# -----------------------------------------------------------------------------
+features:
+  feature_store:
+    catalog: ml_prod
+    schema: feature_store
+    table: customer_monthly_features      # 3-level: ml_prod.feature_store.customer_monthly_features
+    primary_keys: [customer_id, snapshot_date]
+    timestamp_key: snapshot_date
+  # Behavioural / value features observed at snapshot.
+  base_features:
+    - monthly_revenue
+    - avg_balance_3m
+    - product_holdings
+    - txn_count_1m
+    - txn_count_3m
+    - digital_engagement_score
+    - days_since_last_activity
+  # Duration / path features that mitigate the (first-order) Markov violation.
+  # These encode history so the "memoryless" kernel can still see state age.
+  path_features:
+    - tenure_in_state          # months spent in current origin cluster
+    - previous_cluster         # cluster rank one period before origin
+    - n_transitions_12m        # number of cluster changes in trailing 12m
+    - mean_delta               # mean signed rank change over trailing window
+    - delta_variance           # variance of signed rank change (volatility)
+  categorical_features:
+    - previous_cluster
+  origin_column: origin_cluster           # current cluster (rank-encoded)
+  customer_id_column: customer_id
+  snapshot_date_column: snapshot_date
+
+# -----------------------------------------------------------------------------
+# ROW MODELS (one conditional model PER ORIGIN state -> destination)
+# -----------------------------------------------------------------------------
+row_models:
+  # Estimator behind the common interface. Switch without touching code.
+  estimator: multinomial_logistic         # {multinomial_logistic | gradient_boosting}
+  estimators:
+    multinomial_logistic:                  # governable / regulator-facing
+      C: 1.0
+      max_iter: 500
+      class_weight: balanced
+      solver: lbfgs
+    gradient_boosting:                     # performance (xgboost/lightgbm backend)
+      backend: lightgbm                    # {lightgbm | xgboost}
+      n_estimators: 400
+      learning_rate: 0.03
+      max_depth: 6
+      subsample: 0.8
+      colsample_bytree: 0.8
+      reg_lambda: 1.0
+  # Partial pooling: shrink each row toward the global empirical matrix to
+  # stabilise sparse origins (especially the high_value origin row).
+  partial_pooling:
+    enabled: true
+    method: empirical_bayes                # shrink toward global empirical P
+    # shrink weight w = n_origin / (n_origin + kappa); kappa is the pooling
+    # strength (effective prior count).
+    kappa: 200
+  # Laplace / Dirichlet smoothing of empirical counts to avoid zero-prob cells.
+  smoothing:
+    alpha: 1.0
+  sparse_origin_warn_count: 500            # warn if an origin row has < N samples
+
+# -----------------------------------------------------------------------------
+# CALIBRATION (MANDATORY — composition multiplies P many times)
+# -----------------------------------------------------------------------------
+calibration:
+  method: isotonic                         # {isotonic | platt}
+  per_row: true                            # one calibrator per origin row
+  cv_folds: 5
+  reliability:
+    n_bins: 10                             # bins for reliability diagrams / ECE
+  acceptance:
+    max_ece: 0.05                          # per-row ECE must stay <= this (BAU gate)
+
+# -----------------------------------------------------------------------------
+# MARKOV REWARD PROCESS  (CLV)
+# -----------------------------------------------------------------------------
+mrp:
+  reward_column: monthly_revenue           # per-period reward per transient state
+  # Discount factor gamma in (0,1). Monthly discounting.
+  gamma: 0.97
+  # Reward is attached to the *transient* state occupied at the start of the
+  # period; absorbing (churned) reward is 0.
+  absorbing_reward: 0.0
+
+# -----------------------------------------------------------------------------
+# COMPOSITION / MARKOV PROPERTY VALIDATION
+# -----------------------------------------------------------------------------
+composition:
+  n_step_horizons: [1, 3, 6, 9]            # t values for P^t validation
+  markov_property_test:
+    tolerance: 0.05                        # max abs diff: P^t vs empirical t-step
+  fundamental_matrix:
+    singular_guard_eps: 1.0e-9             # (I - Q) invertibility guard
+
+# -----------------------------------------------------------------------------
+# SCORING (monthly Spark batch -> long-format Delta)
+# -----------------------------------------------------------------------------
+scoring:
+  registered_model_name: markov_cluster_kernel    # MLflow registry name
+  model_stage: Production
+  output:
+    transitions_table: ml_prod.markov.transition_scores          # long format
+    trajectory_table: ml_prod.markov.customer_trajectory
+  long_format_columns:
+    - customer_id
+    - score_date
+    - horizon
+    - origin
+    - dest
+    - prob
+  trajectory_columns:
+    - customer_id
+    - score_date
+    - horizon
+    - expected_lifetime
+    - churn_prob
+    - expected_clv
+    - prob_reach_high_power
+    - predicted_destination
+    - predicted_delta
+  write_mode: overwrite_partition          # partition by score_date
+
+# -----------------------------------------------------------------------------
+# MONITORING / DRIFT
+# -----------------------------------------------------------------------------
+monitoring:
+  psi:
+    # PSI computed per ROW of the transition matrix month-over-month.
+    warn_threshold: 0.10
+    breach_threshold: 0.25
+  backtest:
+    n_step_error_tolerance: 0.05           # n-step composition vs empirical
+  retraining_trigger:
+    on_psi_breach: true
+    on_backtest_breach: true
+    quarterly_floor_months: 3              # retrain at least every quarter
+  feature_drift:
+    psi_warn_threshold: 0.10
+    psi_breach_threshold: 0.25
+  output:
+    drift_table: ml_prod.markov.transition_drift
+    alert_table: ml_prod.markov.monitoring_alerts
+
+# -----------------------------------------------------------------------------
+# MODULE 11 — BUSINESS VALUE / ACTIONABILITY
+# -----------------------------------------------------------------------------
+business_value:
+
+  # 11.1 ACTIONABLE COHORT — all numbers are policy levers, owned by Campaigns.
+  action_queue:
+    table: ml_prod.markov.action_queue
+    rules:
+      tau_risk: 0.30                       # P(adverse/downgrade transition) gate
+      tau_growth: 0.20                     # P(reach high_power) cultivation gate
+      clv_floor: 500.0                     # value gate ($) — don't action low value
+      churn_addressable_band:              # not already lost, not perfectly safe
+        min: 0.05
+        max: 0.60
+    trigger_types: [RETENTION, CULTIVATION]
+    # Next-best-action mapping by (trigger_type, origin). Editable by Campaigns.
+    nba_map:
+      RETENTION:
+        low_value: "fee_waiver_offer"
+        emerging_user: "engagement_nudge"
+        growing_user: "relationship_call"
+        high_power: "premium_retention_bundle"
+        high_value: "dedicated_rm_outreach"
+      CULTIVATION:
+        low_value: "onboarding_journey"
+        emerging_user: "product_cross_sell"
+        growing_user: "upgrade_incentive"
+        high_power: "wealth_pathway_offer"
+        high_value: "loyalty_reinforcement"
+
+  # 11.2 EXPECTED ACTIONING VOLUME — capacity planning for Campaigns.
+  actioning_volume:
+    table: ml_prod.markov.actioning_volume
+    group_by: [score_date, segment, channel]
+    # Channel routing by NBA (capacity is planned per channel).
+    channel_map:
+      fee_waiver_offer: outbound_digital
+      engagement_nudge: outbound_digital
+      relationship_call: tele_sales
+      premium_retention_bundle: relationship_manager
+      dedicated_rm_outreach: relationship_manager
+      onboarding_journey: outbound_digital
+      product_cross_sell: outbound_digital
+      upgrade_incentive: outbound_digital
+      wealth_pathway_offer: relationship_manager
+      loyalty_reinforcement: relationship_manager
+
+  # 11.3 GROWTH EXPECTATION — MODELED from the chain, separated from TARGET.
+  #   baseline_drift = portfolio under as-is P (no action)
+  #   policy_drift   = portfolio under P_action (NBA policy)
+  #   expected_growth = policy_drift - baseline_drift
+  # IMPORTANT: P_action effects MUST come from the causal/uplift layer. Until
+  # that layer is wired, lift is ASSUMED here and flagged as such. NEVER move
+  # these numbers into code.
+  value_expectation:
+    table: ml_prod.markov.value_expectation
+    projection_horizon_months: 9           # H for P^H portfolio projection
+    # Causal interface. When `source: causal_pipeline`, lifts are read from the
+    # Double-ML / uplift output table and assumption_flag = false.
+    causal_lift:
+      source: assumed                      # {assumed | causal_pipeline}
+      causal_pipeline_table: ml_prod.causal.nba_uplift_effects
+      assumed_lifts:                       # PLACEHOLDERS — fill from bank figures
+        # Multiplicative/additive adjustments to transition probabilities under
+        # the NBA policy, per trigger. These are AUDITABLE assumptions only.
+        retention_churn_reduction_pp: 0.05 # absolute pp reduction in churn prob
+        cultivation_uplift_to_high_power_pp: 0.03
+        action_take_rate: 0.40             # fraction of queued customers actioned
+      assumption_flag: true                # surfaced in value_expectation table
+    # Portfolio baselines (segment mix etc.) — PLACEHOLDERS, sourced from bank.
+    portfolio_baselines:
+      total_customers_assumed: 1000000
+      source: assumed
+
+  # 11.4 CLOSED LOOP — realized vs expected.
+  value_realized:
+    table: ml_prod.markov.value_realized
+    # Join next-period actuals back to the prior action_queue.
+    realized_lookback_horizon: "3m"        # which horizon's actuals to settle
+    recalibrate_lift: true                 # feed realized/expected ratio back
+
+# -----------------------------------------------------------------------------
+# OPERATING MODEL / BAU
+# -----------------------------------------------------------------------------
+bau:
+  acceptance_criteria:
+    shadow_run_cycles: 3                   # >= 3 monthly cycles in parallel
+    max_per_row_ece: 0.05
+    n_step_backtest_tolerance: 0.05
+    psi_stable_threshold: 0.25
+    require_registry_production_stage: true
+  cadence:
+    score_offset_business_days: 5          # T+N after month-end close (N)
+    scoring_schedule_cron: "0 6 5 * *"     # monthly, ~5th
+    monitoring_schedule_cron: "0 6 * * 1"  # weekly Monday
+    calibration_refresh: monthly
+    retraining: trigger_based
+    retraining_quarterly_floor: true
+  sla:
+    scored_tables_available_by_business_days: 5
+    alert_on_job_failure: true
+    alert_on_drift_breach: true
+  observability:
+    dashboards:
+      - action_queue_volume
+      - value_expectation_vs_realized
+      - transition_matrix_heatmap_mom
+      - drift_status
+
+# -----------------------------------------------------------------------------
+# MLflow / EXPERIMENT TRACKING
+# -----------------------------------------------------------------------------
+mlflow:
+  experiment_path: "/Shared/markov_cluster_transitions"
+  registered_model_name: markov_cluster_kernel
+  log_artifacts:
+    reliability_diagrams: true
+    transition_heatmaps: true
+    empirical_matrices: true
+
+# -----------------------------------------------------------------------------
+# GUARDRAILS (L1 schema/contract | L2 leakage/PIT | L3 business plausibility)
+# -----------------------------------------------------------------------------
+guardrails:
+  l1_contract:
+    enforce_state_contract: true           # ordinal map immutable
+    enforce_row_stochastic: true           # rows of P sum to 1 (atol below)
+    row_sum_atol: 1.0e-6
+    enforce_absorbing_churned: true        # churned row = e_churned
+  l2_leakage:
+    enforce_point_in_time: true
+    enforce_label_embargo: true
+  l3_business:
+    min_class_share_warn: 0.03             # warn if a dest class < 3% per origin
+    max_class_share_warn: 0.05             # info band upper edge (3-5%)
+    clv_non_negative: true
+    expected_lifetime_finite: true
