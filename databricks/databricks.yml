@@ -1,0 +1,43 @@
+# Databricks Asset Bundle for the Markov cluster-transition pipeline.
+#
+# Deploy:  databricks bundle deploy -t <target>
+# Run:     databricks bundle run markov_scoring -t prod
+#
+# Schedules and the T+N offset mirror config/markov_config.yaml (bau.cadence).
+bundle:
+  name: markov_cluster_transitions
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for outputs.
+    default: ml_prod
+  notification_email:
+    description: On-call alert routing for job failure / drift breach.
+    default: customer-analytics-oncall@bank.example
+
+include:
+  - resources/*.yml
+
+artifacts:
+  markov_wheel:
+    type: whl
+    build: python -m build --wheel
+    path: ..
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-dev.azuredatabricks.net
+    variables:
+      catalog: ml_dev
+
+  prod:
+    mode: production
+    workspace:
+      host: https://adb-prod.azuredatabricks.net
+    variables:
+      catalog: ml_prod
+    run_as:
+      service_principal_name: ${var.service_principal}

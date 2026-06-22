@@ -1,0 +1,47 @@
+# Monthly scoring + composition + value layer.
+# Cadence: monthly, T+N business days after month-end close (bau.cadence).
+resources:
+  jobs:
+    markov_scoring:
+      name: "[Markov] Monthly Scoring + Value"
+      # cron 0 6 5 * * -> ~5th of the month (T+N business days); see config.
+      schedule:
+        quartz_cron_expression: "0 0 6 5 * ?"
+        timezone_id: "UTC"
+        pause_status: UNPAUSED
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+      job_clusters:
+        - job_cluster_key: markov_cluster
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "Standard_DS4_v2"
+            num_workers: 4
+            data_security_mode: SINGLE_USER
+      tasks:
+        - task_key: score
+          job_cluster_key: markov_cluster
+          python_wheel_task:
+            package_name: markov_pipeline
+            entry_point: score_job
+            parameters: ["--score-date", "{{job.parameters.score_date}}", "--horizon", "{{job.parameters.horizon}}"]
+          libraries:
+            - whl: ../dist/*.whl
+
+        - task_key: value_layer
+          depends_on:
+            - task_key: score
+          job_cluster_key: markov_cluster
+          python_wheel_task:
+            package_name: markov_pipeline
+            entry_point: value_job
+            parameters: ["--score-date", "{{job.parameters.score_date}}", "--horizon", "{{job.parameters.horizon}}"]
+          libraries:
+            - whl: ../dist/*.whl
+
+      parameters:
+        - name: score_date
+          default: "{{job.start_time.iso_date}}"
+        - name: horizon
+          default: "6m"

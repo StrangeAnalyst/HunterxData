@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "markov_pipeline"
+version = "1.0.0"
+description = "Non-homogeneous Markov chain customer cluster-transition pipeline (kernel, MRP/CLV, value layer)."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "pyyaml>=6.0",
+    "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+gbm = ["lightgbm>=4.0", "xgboost>=2.0"]
+mlflow = ["mlflow>=2.10", "cloudpickle>=3.0"]
+dev = ["pytest>=7.4", "build>=1.0"]
+
+# Console entry points consumed by the Databricks Asset Bundle python_wheel_tasks.
+[project.scripts]
+score_job = "markov_pipeline.jobs.score_job:main"
+value_job = "markov_pipeline.jobs.value_job:main"
+monitoring_job = "markov_pipeline.jobs.monitoring_job:main"
+train_job = "markov_pipeline.jobs.train_job:main"
+
+[tool.setuptools.packages.find]
+include = ["markov_pipeline*"]
+
+[tool.setuptools.package-data]
+markov_pipeline = ["config/*.yaml"]

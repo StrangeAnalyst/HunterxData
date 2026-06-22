@@ -1,0 +1,43 @@
+# Weekly transition-drift + feature-drift monitoring.
+# Cadence: weekly Monday (bau.cadence.monitoring_schedule_cron).
+resources:
+  jobs:
+    markov_monitoring:
+      name: "[Markov] Weekly Drift Monitoring"
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON"
+        timezone_id: "UTC"
+        pause_status: UNPAUSED
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+        # Drift breach raises an alert row; surfaced to the same routing.
+      job_clusters:
+        - job_cluster_key: markov_monitor
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "Standard_DS3_v2"
+            num_workers: 2
+            data_security_mode: SINGLE_USER
+      tasks:
+        - task_key: transition_drift
+          job_cluster_key: markov_monitor
+          python_wheel_task:
+            package_name: markov_pipeline
+            entry_point: monitoring_job
+            parameters:
+              - "--score-date"
+              - "{{job.parameters.score_date}}"
+              - "--baseline-date"
+              - "{{job.parameters.baseline_date}}"
+              - "--horizon"
+              - "{{job.parameters.horizon}}"
+          libraries:
+            - whl: ../dist/*.whl
+      parameters:
+        - name: score_date
+          default: "{{job.start_time.iso_date}}"
+        - name: baseline_date
+          default: ""
+        - name: horizon
+          default: "6m"
