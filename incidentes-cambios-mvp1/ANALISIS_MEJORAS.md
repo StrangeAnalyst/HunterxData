@@ -136,3 +136,17 @@ La v3 (que **reemplaza y contiene** a la v2) responde a tres pedidos: formalizar
   - **Tópicos NMF (k=8)** con tasa de incidente y lift por tópico: identifica *tipos de trabajo* estructuralmente riesgosos (parcheo, certificados, BD…), insight accionable para el CAB independiente del modelo.
 
 Verificación: el notebook v3 completo (98 celdas) fue ejecutado de punta a punta contra el dataset sintético sin errores.
+
+---
+
+# Adición final — Sección 22C: Backtesting rolling (nice to have)
+
+Una sola partición temporal es una sola observación del desempeño. La Sección 22C simula producción con reentrenamiento periódico (expanding window, 6 folds): en cada fold se re-ajusta **todo** desde cero usando solo el pasado (TF-IDF incluido, refit por fold sin fugas) con la configuración ganadora de la Sección 17, y se evalúa el bloque siguiente.
+
+Qué entrega:
+
+- **Estabilidad**: mediana y rango de ROC-AUC, PR-AUC y recall@10% entre folds — la mediana del recall@10% es la cifra más honesta para prometer al negocio (más conservadora que el test único).
+- **Tendencia**: correlación fold→métrica; degradación sostenida (r < -0.5) = concept drift → dispara la recomendación de reentrenamiento mensual en vez de trimestral.
+- **Caveat documentado**: con ~1% de prevalencia cada fold tiene pocos positivos (se anota el conteo en cada punto del gráfico); se lee la mediana y el rango, no cada punto individual.
+
+Estado final del notebook: **100 celdas**, verificado con ejecución completa de punta a punta contra el dataset sintético.
