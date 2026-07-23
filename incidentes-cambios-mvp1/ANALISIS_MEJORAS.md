@@ -97,3 +97,42 @@ jupyter notebook EDA_Incidentes_Cambios_MVP1_v2.ipynb
 ```
 
 El notebook fue verificado ejecutándolo completo (85 celdas) contra un dataset sintético con la misma estructura del origen (hojas Incidentes/Cambios, duplicados por estado, links bidireccionales). **Al re-ejecutar con los datos reales, esperar cifras distintas a las de la v1** — especialmente por los fixes 1.1, 2.1 y 2.2. Números más bajos no son una regresión: son los números honestos.
+
+---
+
+# Versión 3 — Metodología de split y análisis de robustez
+
+La v3 (que **reemplaza y contiene** a la v2) responde a tres pedidos: formalizar la metodología train/val/test con la regla del 3%, ampliar el análisis de features y del target, y profundizar el análisis del texto.
+
+## 1. Metodología del split (Secciones 15 y 15C)
+
+- El split sigue siendo **cronológico** (bloques contiguos train 64% / val 16% / test 20%) — nunca se estratifica barajando, porque eso mezclaría futuro y pasado.
+- **Nuevo:** los puntos de corte se buscan dentro de una ventana estrecha (train 60-68%, val 14-18%) minimizando la desviación relativa de prevalencia entre bloques, sin romper la cronología.
+- **Nueva Sección 15C — validación formal del split:**
+  - **Regla del 3%**: la diferencia de prevalencia entre cualquier par de bloques debe ser ≤ 3 puntos porcentuales; y como la prevalencia es ~1%, se aplica además la versión exigente (desviación relativa ≤ 30% frente a la global), con IC de Wilson por bloque.
+  - **PSI train↔val y train↔test** por feature: detecta deriva de población que invalidaría la selección en validación.
+  - **Test KS** train vs test en las features clave, como confirmación formal.
+  - Veredicto automático APTO / REVISAR.
+
+## 2. Análisis adicionales de features (Secciones 12B y 20B)
+
+- **Información mutua**: captura relaciones no lineales que la correlación punto-biserial no ve; se reportan las features que la correlación lineal subestima.
+- **Information Value (IV/WOE)** con binning por quintiles y suavizado — la convención bancaria (<0.02 inútil … >0.5 **sospechosa de fuga**): además de rankear, funciona como detector adicional de leakage.
+- **Redundancia**: matriz Spearman y listado de pares |ρ|>0.85 candidatos a consolidación.
+- **Importancia por permutación en validación** (métrica: average precision), contrastada contra el gain de XGBoost: separa "lo que el modelo usó" de "lo que le sirve para generalizar", con alerta de dominancia (>5x) como señal de fuga residual.
+
+## 3. Análisis adicionales del target (Sección 9B)
+
+- **Estabilidad temporal de la prevalencia** por trimestre con IC de Wilson (insumo directo de la regla del 3%).
+- **Completitud del label por mes**: % de incidentes con `causado_por_cambio` informado — si la disciplina de documentación cambió en el tiempo, la prevalencia deriva por proceso, no por riesgo real (el principal riesgo del target D1).
+- **Lag causal por segmento**: distribución del tiempo cambio→incidente por nivel de riesgo; lags de semanas delatan enlaces dudosos.
+- **Tests χ² + V de Cramer** para `riesgo`, `tipo_de_cambio`, `categoria`: formaliza el lift y separa significancia de tamaño de efecto.
+
+## 4. Análisis del texto (Secciones 7C y 12C)
+
+- **7C — el corpus en sí**: tamaño y concentración del vocabulario, curva de Zipf (las mesetas delatan plantillas), top unigramas/bigramas, y n° de términos que cubren el 90% del corpus → decisión informada del `max_features` del TF-IDF.
+- **12C — el corpus contra el target**:
+  - **Log-odds suavizado por clase**: los términos/bigramas realmente asociados a incidentes (con exigencia de presencia mínima en positivos, para no reportar ruido con ~166 positivos).
+  - **Tópicos NMF (k=8)** con tasa de incidente y lift por tópico: identifica *tipos de trabajo* estructuralmente riesgosos (parcheo, certificados, BD…), insight accionable para el CAB independiente del modelo.
+
+Verificación: el notebook v3 completo (98 celdas) fue ejecutado de punta a punta contra el dataset sintético sin errores.
