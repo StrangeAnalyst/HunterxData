@@ -1,0 +1,11 @@
+# MVP 1 — Prediccion de incidentes por cambios en aplicativos
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7
+scikit-learn>=1.3
+xgboost>=2.0
+scipy>=1.10
+openpyxl>=3.1
+joblib>=1.3
+# opcional (Seccion 17B del notebook):
+# lightgbm>=4.0
