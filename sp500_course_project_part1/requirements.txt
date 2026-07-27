@@ -1,0 +1,9 @@
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7
+scikit-learn>=1.3
+scipy>=1.10
+yfinance>=0.2.50
+lxml>=4.9
+sentence-transformers>=3.0
+jupyterlab>=4.0
