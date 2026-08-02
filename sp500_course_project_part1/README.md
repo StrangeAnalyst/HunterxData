@@ -1,11 +1,25 @@
 # Course Project — Part 1: S&P 500 news embeddings & technical analysis
 
-Two self-contained Jupyter notebooks covering both sections of the assignment.
-
-| File | Section | Topic |
+| File | Section | State |
 |---|---|---|
-| `Section_A_news_embeddings_clustering.ipynb` | A | Text embeddings on S&P 500 news → K-Means → silhouette → PCA → cluster interpretation |
-| `Section_B_technical_analysis_backtesting.ipynb` | B | MA50/MA200 Golden & Death Crosses → 14-day filter → volatility → visualisation → event-study backtest |
+| `Section_A_news_embeddings_clustering.ipynb` | A | **Run this one.** Clean, no outputs |
+| `Section_B_technical_analysis_backtesting.ipynb` | B | **Run this one.** Clean, no outputs |
+| `news_embeddings_sp500_A01731191.ipynb` | A | Earlier executed run, reflections grounded in its numbers |
+| `technical_analysis_sp500_A01731191.ipynb` | B | Earlier executed run (April 2025 window), reflections grounded in its numbers |
+
+## Important: the analysis window is now rolling
+
+Section B originally hard-coded `2024-05-01 → 2025-05-01`, taken from the course template. That makes
+the exercise meaningless once time passes, because the notebook screens for crosses **in the last 14
+days** and those dates are no longer recent. The window is now computed as **a rolling one year ending
+on the day the notebook runs**; set `USE_FIXED_WINDOW = True` to reproduce the template's dates.
+
+Section A needed no change: `.news` always returns current articles.
+
+**Consequence:** re-running either notebook produces different data, so the numbers cited in the
+reflection answers of the two `A01731191` files no longer apply. After running the clean notebooks,
+use the **📊 Reflection data pack** cell near the end of each one — it prints every figure the written
+answers need, in one place — and update the answers accordingly.
 
 ## How to run
 
