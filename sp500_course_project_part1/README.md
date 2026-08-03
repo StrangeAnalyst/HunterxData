@@ -2,10 +2,16 @@
 
 | File | Section | State |
 |---|---|---|
-| `Section_A_news_embeddings_clustering.ipynb` | A | **Run this one.** Clean, no outputs |
-| `Section_B_technical_analysis_backtesting.ipynb` | B | **Run this one.** Clean, no outputs |
-| `news_embeddings_sp500_A01731191.ipynb` | A | Earlier executed run, reflections grounded in its numbers |
-| `technical_analysis_sp500_A01731191.ipynb` | B | Earlier executed run (April 2025 window), reflections grounded in its numbers |
+| `news_embeddings_sp500_A01731191.ipynb` | A | **Final — submit this.** Executed 2026-08-03, 0 errors, reflections grounded in its own numbers |
+| `technical_analysis_sp500_A01731191.ipynb` | B | **Final — submit this.** Executed 2026-08-03, 0 errors, 22 charts, reflections grounded |
+| `Section_A_news_embeddings_clustering.ipynb` | A | Clean source, no outputs — re-run from here |
+| `Section_B_technical_analysis_backtesting.ipynb` | B | Clean source, no outputs — re-run from here |
+
+Every figure quoted in the reflection answers of the two submission notebooks was cross-checked
+against that notebook's own executed outputs. The only numbers that do not appear in their outputs are
+explicitly attributed to earlier runs, and are used to make the replication argument: the golden cross
+underperformed its baseline in both a bearish and a bullish year, and the same three news themes
+recurred across three corpora four months apart.
 
 ## Important: the analysis window is now rolling
 
